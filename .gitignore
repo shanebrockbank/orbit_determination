@@ -23,6 +23,6 @@ htmlcov/
 .idea/
 .DS_Store
 
-# Data / outputs
-data/
+# Data / outputs (generated, not test fixtures under tests/data/)
+/data/
 *.log
