@@ -60,11 +60,19 @@ Per-axis measurement residual vs time, bounded by the simulator's own
 ![GPS measurement residuals](docs/screenshots/03_gps_measurements.png)
 Backed by: `tests/test_measurements.py`
 
-### ⬜ Module 4 — EKF
-Will show: filtered estimate vs. truth vs. raw measurements, plus estimate
-error against the filter's own predicted ±1σ/±3σ covariance bounds. That
-error-vs-bounds plot is the centerpiece screenshot of this project — a
-merely "close" estimate line proves far less than a properly-bounded one.
+### ✅ Module 4 — EKF
+The centerpiece screenshot: per-axis position estimate error against the
+filter's own predicted ±1σ/±3σ covariance bounds, not just an
+estimate-vs-truth line — a merely "close" estimate proves far less than
+one whose error visibly stays inside the envelope the filter itself is
+reporting. State transition matrix Φ_k is finite-difference (central
+difference through the existing, already-tested `dynamics.propagate`,
+not a separately-integrated variational equation); covariance update is
+Joseph form. Seeded with +1 km position / +10 m/s velocity error,
+converges to a few meters within the first few minutes of a ~95-minute
+orbit.
+![EKF error vs. covariance bounds](docs/screenshots/04_ekf_error_bounds.png)
+Backed by: `tests/test_ekf.py`
 
 ### ⬜ Module 5 — Monte Carlo
 Will show: consistency check across N runs (NEES/NIS statistics or an
@@ -79,7 +87,7 @@ modules.
 1. ✅ Two-body + J2 propagator (`dynamics.py`)
 2. ✅ SGP4 ground truth (`truth.py`)
 3. ✅ Simulated noisy GPS measurements (`measurements.py`)
-4. ⬜ Hand-rolled EKF (`ekf.py`)
+4. ✅ Hand-rolled EKF (`ekf.py`)
 5. ⬜ Monte Carlo consistency verification (`scripts/run_monte_carlo.py`)
 6. ⬜ Visualization suite (`scripts/plot_results.py`)
 7. ⬜ CI/CD (✅ done early) & documentation of physical/estimation trade-offs
@@ -92,6 +100,28 @@ modules.
 | `R_EARTH` | `6378137.0` | m | WGS-84 equatorial radius |
 | `J2` | `1.08262668e-3` | dimensionless | WGS-84/EGM96 |
 | `OMEGA_EARTH` | `7.2921150e-5` | rad/s | WGS-84 |
+
+## EKF assumption: finite-difference Jacobian, not analytic
+
+`ekf.py`'s state transition matrix Φ_k is built by central-differencing
+the existing two-body+J2 propagator (perturb each of the 6 state
+components, propagate x+δ and x-δ over the full step, difference the
+results) rather than hand-deriving the analytic J2 acceleration
+Jacobian and integrating the variational equation Φ̇ = FΦ alongside the
+nonlinear state. Both are valid; finite-difference reuses code that's
+already tested in Module 1 and carries far less bug surface than a
+hand-derived Jacobian (a sign error there would silently degrade filter
+performance rather than throwing an exception), at a small and
+controllable accuracy cost via the perturbation step size. As an
+independent correctness check, the resulting Φ_k is confirmed symplectic
+(det = 1, as required for conservative two-body/J2 dynamics) to ~1e-10
+in `test_ekf.py`.
+
+`predict()` reserves a `jacobian_mode="analytic"` option (currently
+`NotImplementedError`) for a future hand-derived J2 Jacobian — a good
+portfolio detail to add later, validated against the finite-difference
+Φ_k to a tight tolerance, but not on the critical path for a working,
+tested filter.
 
 ## Frame assumption: TEME ≈ ECI
 

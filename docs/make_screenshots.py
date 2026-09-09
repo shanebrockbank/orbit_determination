@@ -26,9 +26,11 @@ import numpy as np
 
 from orbit_od.constants import J2, MU_EARTH, R_EARTH
 from orbit_od.dynamics import propagate
+from orbit_od.ekf import discrete_white_noise_q, predict, update
 from orbit_od.measurements import simulate_gps_measurements
 from orbit_od.plotting import (
     CATEGORICAL,
+    EST_STYLE,
     MEAS_STYLE,
     TRUTH_STYLE,
     draw_earth_sphere,
@@ -165,9 +167,72 @@ def module3_gps_measurements() -> None:
     fig.savefig(OUT_DIR / "03_gps_measurements.png")
 
 
+def module4_ekf_error_bounds() -> None:
+    """The centerpiece screenshot: per-axis EKF position estimate error
+    against the filter's own predicted +/-1-sigma/+/-3-sigma bounds --
+    not just an estimate-vs-truth line. A merely "close" estimate proves
+    much less than an estimate whose error visibly stays inside the
+    covariance envelope the filter itself is reporting, which is what
+    actually demonstrates the filter is statistically consistent.
+
+    Same clean-room scenario as test_ekf.py::test_ekf_converges_within_one_orbit
+    (truth from dynamics.propagate, matching the filter's own model) --
+    isolates EKF correctness from the model-mismatch effects that Module 5's
+    Monte Carlo will exercise against real SGP4 truth.
+    """
+    a = R_EARTH + 500e3
+    v = np.sqrt(MU_EARTH / a)
+    x0_true = np.array([a, 0.0, 0.0, 0.0, v, 0.0])
+    n = np.sqrt(MU_EARTH / a**3)
+    period = 2.0 * np.pi / n
+    dt = 10.0
+    n_steps = int(period // dt)
+    t_grid = np.arange(n_steps + 1) * dt
+
+    truth = propagate(x0_true, (0.0, t_grid[-1]), t_eval=t_grid, j2=J2).y.T
+
+    sigma_m = 10.0
+    R = (sigma_m**2) * np.eye(3)
+    rng = np.random.default_rng(0)
+
+    x_est = x0_true + np.array([1000.0, 0.0, 0.0, 0.0, 10.0, 0.0])
+    P = np.diag([1000.0**2] * 3 + [10.0**2] * 3)
+    Q = discrete_white_noise_q(dt, sigma_a=1e-6)
+
+    errors = np.zeros((n_steps, 3))
+    sigmas = np.zeros((n_steps, 3))
+    for k in range(1, len(t_grid)):
+        x_pred, P_pred = predict(x_est, P, dt, Q, j2=J2)
+        z = truth[k, :3] + rng.normal(scale=sigma_m, size=3)
+        x_est, P, _innovation = update(x_pred, P_pred, z, R)
+        errors[k - 1] = x_est[:3] - truth[k, :3]
+        sigmas[k - 1] = np.sqrt(np.diag(P)[:3])
+
+    t_hr = t_grid[1:] / 3600.0
+
+    fig, axes = new_timeseries_figure(nrows=3)
+    labels = ["X error (m)", "Y error (m)", "Z error (m)"]
+    for i, ax in enumerate(axes):
+        ax.fill_between(t_hr, -3 * sigmas[:, i], 3 * sigmas[:, i], color="#c3c2b7", alpha=0.25,
+                         label="±3σ" if i == 0 else None)
+        ax.plot(t_hr, sigmas[:, i], color="#898781", linewidth=1, linestyle="--",
+                 label="±1σ" if i == 0 else None)
+        ax.plot(t_hr, -sigmas[:, i], color="#898781", linewidth=1, linestyle="--")
+        est_style = dict(EST_STYLE)
+        est_style["label"] = "Estimate error" if i == 0 else None
+        ax.plot(t_hr, errors[:, i], **est_style)
+        ax.set_ylabel(labels[i])
+    axes[0].set_title("EKF position error vs. its own predicted covariance bounds")
+    axes[0].legend(frameon=False, labelcolor="#52514e", fontsize=9)
+    axes[-1].set_xlabel("Time (hours)")
+    fig.tight_layout()
+    fig.savefig(OUT_DIR / "04_ekf_error_bounds.png")
+
+
 if __name__ == "__main__":
     module1_j2_raan_drift()
     module2a_iss_truth_trajectory_3d()
     module2b_iss_altitude_and_speed()
     module3_gps_measurements()
+    module4_ekf_error_bounds()
     print(f"Wrote screenshots to {OUT_DIR}")
